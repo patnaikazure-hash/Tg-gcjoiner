@@ -141,7 +141,16 @@ window.addEventListener('unhandledrejection', function(e) {
              onkeydown="if(event.key==='Enter')addKeyword()">
       <button class="btn-sm btn-primary" onclick="addKeyword()">Add</button>
     </div>
-    <button class="btn btn-outline btn-sm" style="width:auto; margin-bottom:0" onclick="loadSampleKW()">Load samples</button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <button class="btn-sm btn-outline" onclick="document.getElementById('kw-file').click()">📄 Upload .txt</button>
+      <button class="btn-sm btn-outline" onclick="loadSampleKW()">Load samples</button>
+      <button class="btn-sm btn-outline" onclick="clearKeywords()">Clear all</button>
+    </div>
+    <input type="file" id="kw-file" accept=".txt,text/plain" style="display:none"
+           onchange="uploadKeywords(this)">
+    <p style="font-size:11px; color:var(--muted); margin-top:8px">
+      Upload a .txt with one keyword per line (or comma-separated).
+    </p>
   </div>
 
   <!-- Min members slider -->
@@ -368,6 +377,31 @@ function removeKeyword(i) {
 function loadSampleKW() {
   SAMPLES.forEach(function(k) { if (!keywords.includes(k)) keywords.push(k); });
   renderKeywords();
+}
+function clearKeywords() {
+  if (keywords.length && !confirm('Remove all ' + keywords.length + ' keywords?')) return;
+  keywords = [];
+  renderKeywords();
+}
+function uploadKeywords(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var text  = e.target.result || '';
+    var parts = text.split(/[\r\n,]+/);
+    var added = 0;
+    parts.forEach(function(k) {
+      k = k.trim();
+      if (k && keywords.indexOf(k) === -1) { keywords.push(k); added++; }
+    });
+    renderKeywords();
+    log('Loaded ' + added + ' keyword(s) from ' + file.name
+        + (added < parts.filter(function(p){return p.trim();}).length ? ' (duplicates skipped)' : ''), 'ok');
+  };
+  reader.onerror = function() { log('Could not read file', 'err'); };
+  reader.readAsText(file);
+  input.value = '';   // allow re-selecting the same file
 }
 function renderKeywords() {
   var wrap  = document.getElementById('kw-wrap');
