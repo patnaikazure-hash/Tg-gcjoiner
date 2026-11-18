@@ -661,7 +661,15 @@ async function joinGroup(group) {
     if (/USER_ALREADY_PARTICIPANT/i.test(msg)) return 'skipped';
     if (/FLOOD_WAIT/i.test(msg)) {
       var secs = parseInt(msg.replace(/\D/g,'')) || 30;
-      log('Flood wait ' + secs + 's…', 'info');
+      if (secs > 180) {
+        // Long cooldown → stop cleanly instead of looking frozen for ages
+        abortMsg = 'Telegram flood limit — it wants a ~' + Math.round(secs/60)
+                 + ' min cooldown. Stopped. Try again later or raise the join delay.';
+        log('⛔ ' + abortMsg, 'err');
+        stopFlag = true;
+        return 'failed';
+      }
+      log('Flood wait ' + secs + 's — pausing…', 'info');
       await sleep(secs * 1000);
       return 'failed';
     }
@@ -739,6 +747,25 @@ async function filterActive(groups, maxStaleHours) {
 }
 
 // ─── START / STOP ─────────────────────────────────────────
+var abortMsg = '';
+
+// Re-establish the MTProto link if it dropped (weak signal, backgrounding).
+// Returns true once connected, false if it couldn't after a few tries.
+async function ensureConnected() {
+  try { if (client && client.connected) return true; } catch(e) {}
+  for (var a = 0; a < 3 && !stopFlag; a++) {
+    try {
+      log('Reconnecting…', 'info');
+      await withTimeout(client.connect(), 20000, 'connect');
+      log('Reconnected ✓', 'ok');
+      return true;
+    } catch(e) {
+      await sleep(2500);
+    }
+  }
+  return false;
+}
+
 async function startJoin() {
   if (running) return;
 
@@ -755,6 +782,7 @@ async function startJoin() {
   }
 
   running = true; stopFlag = false;
+  abortMsg = '';
   grpResults = [];
   updateStats();
 
@@ -773,10 +801,10 @@ async function startJoin() {
   try {
     if (client) { try { client.disconnect(); } catch(e){} client = null; }
     client = makeClient(sess);
-    await client.connect();
+    await withTimeout(client.connect(), 25000, 'connect');
     log('Connected ✓', 'ok');
   } catch(e) {
-    log('Connection failed: ' + (e.message||e), 'err');
+    log('Connection failed: ' + (e.message||e) + ' — check your signal and retry.', 'err');
     endJoin(); return;
   }
 
@@ -793,6 +821,8 @@ async function startJoin() {
   async function producer() {
     for (var ki = 0; ki < keywords.length && !stopFlag; ki++) {
       var kw = keywords[ki];
+      await ensureConnected();           // heal a dropped link before searching
+      if (stopFlag) break;
       log('🔍 Searching: "' + kw + '"…', 'info');
       try {
         var found = await searchGroups(kw, minM);
@@ -819,6 +849,8 @@ async function startJoin() {
     var processed = 0;
     while ((!searchDone || joinQueue.length) && !stopFlag) {
       if (!joinQueue.length) { await sleep(300); continue; }   // wait for producer
+      // if the link dropped, wait and retry — don't lose the queue
+      if (!(await ensureConnected())) { await sleep(5000); continue; }
       var grp = joinQueue.shift();
 
       // activity check right before joining this one
