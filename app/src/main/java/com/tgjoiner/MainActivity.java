@@ -32,6 +32,9 @@ public class MainActivity extends Activity {
             window.setStatusBarColor(Color.parseColor("#0a0a0a"));
         }
 
+        // Keep the screen on while the app is open so a run isn't cut off
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         webView = new WebView(this);
         setContentView(webView);
 
@@ -90,6 +93,23 @@ public class MainActivity extends Activity {
             }
             filePathCallback.onReceiveValue(results);
             filePathCallback = null;
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (webView != null) webView.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+            // Critical: Android can freeze WebView JS timers in the background.
+            // Without this, every setTimeout/await stays stuck after returning.
+            webView.resumeTimers();
         }
     }
 

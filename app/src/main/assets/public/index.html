@@ -566,70 +566,82 @@ function renderResults() {
 }
 
 // ─── CORE: search + join ──────────────────────────────────
+
+// Rejects a hung request instead of freezing the whole run forever.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise(function(_, reject) {
+      setTimeout(function(){ reject(new Error('timeout: ' + (label || 'op'))); }, ms);
+    }),
+  ]);
+}
+
+// Decide whether a search hit is a group we should keep.
+//  - must be a group (supergroup), not a broadcast channel
+//  - visible member count  → must meet the minimum-members threshold
+//  - hidden member count   → keep ONLY if posting messages is allowed
+function evalCandidate(c, minMembers, keyword) {
+  if (!getattr(c, 'megagroup') && !getattr(c, 'gigagroup')) return null;
+
+  var banned  = c.defaultBannedRights;
+  var canSend = !getattr(c, 'broadcast') && !(banned && banned.sendMessages);
+  var cnt     = c.participantsCount || 0;
+  var hidden  = !cnt;                       // 0 / undefined → count is hidden
+
+  if (hidden) {
+    if (!canSend) return null;              // hidden + can't post → skip
+  } else {
+    if (cnt < minMembers) return null;      // visible + below threshold → skip
+  }
+
+  var id = c.id ? c.id.toString() : '';
+  if (!id) return null;
+  return {
+    entity:  c,
+    name:    c.title || c.username || 'Group',
+    members: hidden ? 'hidden' : cnt,
+    keyword: keyword,
+    status:  'found',
+    id:      id,
+    canSend: canSend,
+  };
+}
+
 async function searchGroups(keyword, minMembers) {
   var G = window.GramJS.Api;
   var found = [];
   var seen  = {};
 
+  function collect(chats) {
+    for (var i = 0; i < chats.length; i++) {
+      var g = evalCandidate(chats[i], minMembers, keyword);
+      if (!g || seen[g.id]) continue;
+      seen[g.id] = true;
+      found.push(g);
+    }
+  }
+
   try {
     // contacts.Search — fastest, returns groups matching keyword
-    var res = await client.invoke(new G.contacts.Search({
-      q: keyword,
-      limit: 100,
-    }));
-    var chats = res.chats || [];
-    for (var i = 0; i < chats.length; i++) {
-      var c = chats[i];
-      // megagroup = supergroup (the kind people usually mean by "group")
-      if (!getattr(c, 'megagroup') && !getattr(c, 'gigagroup')) continue;
-      var cnt = c.participantsCount || 0;
-      if (cnt < minMembers) continue;
-      var id = c.id ? c.id.toString() : '';
-      if (seen[id]) continue;
-      seen[id] = true;
-      found.push({
-        entity:  c,
-        name:    c.title || c.username || 'Group',
-        members: cnt,
-        keyword: keyword,
-        status:  'found',
-        id:      id,
-      });
-    }
-  } catch (e) {
-    // contacts.Search may require a channel resolution; also try global search
-  }
+    var res = await withTimeout(client.invoke(new G.contacts.Search({
+      q: keyword, limit: 100,
+    })), 45000, 'search');
+    collect(res.chats || []);
+  } catch (e) {}
 
   // Also try messages.SearchGlobal for extra coverage
   try {
-    var G2 = window.GramJS.Api;
-    var res2 = await client.invoke(new G2.messages.SearchGlobal({
+    var res2 = await withTimeout(client.invoke(new G.messages.SearchGlobal({
       q: keyword,
-      filter: new G2.InputMessagesFilterEmpty(),
+      filter: new G.InputMessagesFilterEmpty(),
       minDate: 0, maxDate: 0,
       offsetRate: 0,
-      offsetPeer: new G2.InputPeerEmpty(),
+      offsetPeer: new G.InputPeerEmpty(),
       offsetId: 0,
       limit: 100,
-    }));
-    var chats2 = res2.chats || [];
-    for (var j = 0; j < chats2.length; j++) {
-      var c2 = chats2[j];
-      if (!getattr(c2, 'megagroup') && !getattr(c2, 'gigagroup')) continue;
-      var cnt2 = c2.participantsCount || 0;
-      if (cnt2 < minMembers) continue;
-      var id2 = c2.id ? c2.id.toString() : '';
-      if (seen[id2]) continue;
-      seen[id2] = true;
-      found.push({
-        entity:  c2,
-        name:    c2.title || c2.username || 'Group',
-        members: cnt2,
-        keyword: keyword,
-        status:  'found',
-        id:      id2,
-      });
-    }
+    })), 45000, 'searchGlobal');
+    collect(res2.chats || []);
   } catch (e2) {}
 
   return found;
@@ -642,7 +654,7 @@ function getattr(obj, key) {
 async function joinGroup(group) {
   try {
     var G = window.GramJS.Api;
-    await client.invoke(new G.channels.JoinChannel({ channel: group.entity }));
+    await withTimeout(client.invoke(new G.channels.JoinChannel({ channel: group.entity })), 45000, 'join');
     return 'joined';
   } catch(e) {
     var msg = e.errorMessage || e.message || '';
@@ -666,10 +678,10 @@ async function checkActive(group, maxStaleHours) {
       channelId:  group.entity.id,
       accessHash: group.entity.accessHash,
     });
-    var hist = await client.invoke(new G.messages.GetHistory({
+    var hist = await withTimeout(client.invoke(new G.messages.GetHistory({
       peer: peer, offsetId: 0, offsetDate: 0, addOffset: 0,
       limit: 25, maxId: 0, minId: 0, hash: 0,
-    }));
+    })), 30000, 'history');
     var msgs = (hist.messages || []).filter(function(m){ return m && m.date; });
     if (!msgs.length) return { active: false, lastMs: 0, recent24: 0 };
 
