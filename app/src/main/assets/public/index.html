@@ -30,7 +30,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, sans-s
 .card-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
 .card-value { font-size: 24px; font-weight: 700; }
 
-.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.stats .card-value { font-size: 22px; }
 
 .btn { width: 100%; padding: 13px; border-radius: 8px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: .2s; }
 .btn-primary { background: var(--accent); color: #000; }
@@ -75,6 +76,11 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
 .badge.skipped { background: rgba(136,136,136,.15); color: var(--muted); }
 .badge.failed  { background: rgba(248,113,113,.15); color: var(--red); }
 .badge.found   { background: rgba(56,189,248,.12);  color: var(--accent); }
+.badge.dead    { background: rgba(248,113,113,.12); color: var(--red); }
+
+.switch-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--text); }
+.switch-row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); flex-shrink: 0; }
+select.input { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
 
 .session-info { font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; word-break: break-all; }
 
@@ -115,8 +121,12 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="card-value" style="color:var(--green)" id="stat-joined">0</div>
     </div>
     <div class="card">
-      <div class="card-title">Skipped</div>
+      <div class="card-title">Already in</div>
       <div class="card-value" style="color:var(--muted)" id="stat-skipped">0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Dead (skipped)</div>
+      <div class="card-value" style="color:var(--red)" id="stat-dead">0</div>
     </div>
   </div>
 
@@ -144,6 +154,25 @@ window.addEventListener('unhandledrejection', function(e) {
     </div>
   </div>
 
+  <!-- Activity filter -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">Activity filter</div>
+    <label class="switch-row" style="margin-top:10px">
+      <span>Skip dead groups (no recent chat)</span>
+      <input type="checkbox" id="activity-on" checked>
+    </label>
+    <label style="margin-top:16px; margin-bottom:8px">Must have a message within</label>
+    <select class="input" id="activity-window" style="margin-bottom:0">
+      <option value="6">Last 6 hours</option>
+      <option value="24">Last 24 hours</option>
+      <option value="48" selected>Last 2 days</option>
+      <option value="168">Last 7 days</option>
+    </select>
+    <p style="font-size:11px; color:var(--muted); margin-top:8px">
+      Checks each group's latest messages before joining. Groups with no recent activity are skipped.
+    </p>
+  </div>
+
   <!-- Action buttons -->
   <div id="btn-start-wrap">
     <button class="btn btn-primary" id="start-btn" onclick="startJoin()">🚀 Start Auto Join</button>
@@ -162,10 +191,11 @@ window.addEventListener('unhandledrejection', function(e) {
 <!-- ═══ RESULTS ══════════════════════════════════════════ -->
 <div class="page" id="page-results">
   <div class="section-title">Groups Found & Joined</div>
-  <div style="display:flex; gap:8px; margin-bottom:12px">
+  <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap">
     <button class="btn-sm btn-outline" onclick="setRFilter('all')">All</button>
     <button class="btn-sm btn-outline" onclick="setRFilter('joined')">✅ Joined</button>
-    <button class="btn-sm btn-outline" onclick="setRFilter('skipped')">⏭ Skipped</button>
+    <button class="btn-sm btn-outline" onclick="setRFilter('dead')">💀 Dead</button>
+    <button class="btn-sm btn-outline" onclick="setRFilter('skipped')">⏭ Already in</button>
     <button class="btn-sm btn-outline" onclick="setRFilter('failed')">❌ Failed</button>
   </div>
   <div id="results-list"><div class="empty">No results yet — run the joiner first.</div></div>
@@ -450,10 +480,21 @@ async function verifyOTP() {
 function updateStats() {
   var found   = grpResults.length;
   var joined  = grpResults.filter(function(r){ return r.status==='joined'; }).length;
-  var skipped = grpResults.filter(function(r){ return r.status!=='joined'; }).length;
+  var skipped = grpResults.filter(function(r){ return r.status==='skipped'; }).length;
+  var dead    = grpResults.filter(function(r){ return r.status==='dead'; }).length;
   document.getElementById('stat-found').textContent   = found;
   document.getElementById('stat-joined').textContent  = joined;
   document.getElementById('stat-skipped').textContent = skipped;
+  document.getElementById('stat-dead').textContent    = dead;
+}
+
+function fmtAgo(ms) {
+  if (!ms) return 'unknown';
+  var s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60)    return 'just now';
+  if (s < 3600)  return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
 }
 
 // ─── Results render ───────────────────────────────────────
@@ -468,14 +509,23 @@ function renderResults() {
     list.innerHTML = '<div class="empty">No ' + (rFilter==='all'?'':''+rFilter+' ') + 'results.</div>';
     return;
   }
+  var MAP = {
+    joined:  ['joined',  '✅ Joined'],
+    failed:  ['failed',  '❌ Failed'],
+    dead:    ['dead',    '💀 Dead'],
+    skipped: ['skipped', '⏭ Already in'],
+    found:   ['found',   '🔍 Found'],
+  };
   list.innerHTML = shown.map(function(r) {
-    var bc = r.status==='joined'?'joined':r.status==='failed'?'failed':r.status==='found'?'found':'skipped';
-    var bt = r.status==='joined'?'✅ Joined':r.status==='failed'?'❌ Failed':r.status==='found'?'🔍 Found':'⏭ Skipped';
+    var m   = MAP[r.status] || MAP.found;
+    var act = (r.activity && r.activity.lastMs)
+      ? '<span>🕐 ' + fmtAgo(r.activity.lastMs) + '</span>' : '';
     return '<div class="grp-item">'
       + '<div class="grp-name">' + escapeHtml(r.name) + '</div>'
       + '<div class="grp-meta">'
-      +   '<span class="badge ' + bc + '">' + bt + '</span>'
+      +   '<span class="badge ' + m[0] + '">' + m[1] + '</span>'
       +   '<span>👥 ' + (r.members||'?') + '</span>'
+      +   act
       +   '<span style="color:#555">kw: ' + escapeHtml(r.keyword) + '</span>'
       + '</div></div>';
   }).join('');
@@ -573,6 +623,75 @@ async function joinGroup(group) {
   }
 }
 
+// ─── ACTIVITY CHECK: is this group actually alive? ────────
+// Pulls the latest messages and looks at when people last chatted.
+async function checkActive(group, maxStaleHours) {
+  try {
+    var G = window.GramJS.Api;
+    var peer = new G.InputPeerChannel({
+      channelId:  group.entity.id,
+      accessHash: group.entity.accessHash,
+    });
+    var hist = await client.invoke(new G.messages.GetHistory({
+      peer: peer, offsetId: 0, offsetDate: 0, addOffset: 0,
+      limit: 25, maxId: 0, minId: 0, hash: 0,
+    }));
+    var msgs = (hist.messages || []).filter(function(m){ return m && m.date; });
+    if (!msgs.length) return { active: false, lastMs: 0, recent24: 0 };
+
+    var nowSec = Math.floor(Date.now() / 1000);
+    var newest = 0, recent24 = 0;
+    for (var i = 0; i < msgs.length; i++) {
+      if (msgs[i].date > newest) newest = msgs[i].date;
+      if (nowSec - msgs[i].date <= 86400) recent24++;
+    }
+    var ageHours = (nowSec - newest) / 3600;
+    return {
+      active:   ageHours <= maxStaleHours,
+      lastMs:   newest * 1000,
+      recent24: recent24,
+    };
+  } catch(e) {
+    // Can't read history (restricted/transient) → unknown, don't discard.
+    return { active: null, lastMs: 0, recent24: 0, error: (e.errorMessage || e.message || '' + e) };
+  }
+}
+
+// Probe many groups in parallel (small pool) and keep only the live ones.
+async function filterActive(groups, maxStaleHours) {
+  var alive = [];
+  var idx = 0, done = 0;
+  var total = groups.length;
+  var CONC = Math.min(4, total || 1);
+
+  async function worker() {
+    while (idx < groups.length && !stopFlag) {
+      var g = groups[idx++];
+      var res = await checkActive(g, maxStaleHours);
+      g.activity = res;
+      done++;
+      setProgress(35 + Math.round(done / total * 25));
+
+      if (res.active === false) {
+        g.status = 'dead';
+        log('💀 Dead: ' + g.name + ' — last chat ' + fmtAgo(res.lastMs), 'info');
+      } else {
+        alive.push(g);
+        if (res.active === true)
+          log('🟢 Active: ' + g.name + ' — ' + res.recent24 + ' msg/24h, last ' + fmtAgo(res.lastMs), 'ok');
+        else
+          log('❔ ' + g.name + ' — couldn\'t read history, will try anyway', 'info');
+      }
+      updateStats(); renderResults();
+    }
+  }
+
+  var pool = [];
+  for (var w = 0; w < CONC; w++) pool.push(worker());
+  await Promise.all(pool);
+  return alive;
+}
+
 // ─── START / STOP ─────────────────────────────────────────
 async function startJoin() {
   if (running) return;
@@ -601,6 +720,8 @@ async function startJoin() {
 
   var minM  = MIN_MEMBERS();
   var delay = JOIN_DELAY();
+  var activityOn  = document.getElementById('activity-on').checked;
+  var activityWin = parseInt(document.getElementById('activity-window').value) || 48;
 
   log('Connecting…', 'info');
   try {
@@ -619,14 +740,16 @@ async function startJoin() {
   for (var ki = 0; ki < keywords.length && !stopFlag; ki++) {
     var kw = keywords[ki];
     log('Searching: "' + kw + '"…', 'info');
-    setProgress(Math.round(ki / keywords.length * 40));
+    setProgress(Math.round(ki / keywords.length * 35));
     try {
       var found = await searchGroups(kw, minM);
       log('  "' + kw + '" → ' + found.length + ' group(s) with ' + minM + '+ members', found.length ? 'ok' : 'info');
       found.forEach(function(g) {
-        if (!seen[g.id]) { seen[g.id] = true; allGroups.push(g); }
+        if (seen[g.id]) return;
+        seen[g.id] = true;
+        allGroups.push(g);
+        grpResults.push(g);
       });
-      grpResults = grpResults.concat(found);
       updateStats(); renderResults();
     } catch(e) {
       log('Search error for "' + kw + '": ' + (e.message||e), 'err');
@@ -634,22 +757,26 @@ async function startJoin() {
     if (!stopFlag) await sleep(1200); // small pause between searches
   }
 
-  setProgress(45);
+  setProgress(35);
   log('Total unique groups found: ' + allGroups.length, 'ok');
 
-  // ── Phase 2: join each group ──
-  for (var gi = 0; gi < allGroups.length && !stopFlag; gi++) {
-    var grp = allGroups[gi];
+  // ── Phase 1.5: activity check — drop dead groups ──
+  var toJoin = allGroups;
+  if (activityOn && allGroups.length && !stopFlag) {
+    log('Checking which groups are actually active…', 'info');
+    toJoin = await filterActive(allGroups, activityWin);
+    log('Active: ' + toJoin.length + ' / ' + allGroups.length + '  (dead groups skipped)', 'ok');
+  }
+  setProgress(60);
+
+  // ── Phase 2: join each active group ──
+  for (var gi = 0; gi < toJoin.length && !stopFlag; gi++) {
+    var grp = toJoin[gi];
     log('Joining: ' + grp.name + ' (' + grp.members + ' members)…', 'join');
-    setProgress(45 + Math.round(gi / allGroups.length * 50));
+    setProgress(60 + Math.round(gi / toJoin.length * 40));
 
     var status = await joinGroup(grp);
-    grp.status = status;
-
-    // find and update in grpResults
-    for (var ri = 0; ri < grpResults.length; ri++) {
-      if (grpResults[ri].id === grp.id) { grpResults[ri].status = status; break; }
-    }
+    grp.status = status;   // shared reference — updates the Results list too
 
     var emoji = status==='joined'?'✅':status==='skipped'?'⏭':'❌';
     log(emoji + ' ' + grp.name + ': ' + status, status==='joined'?'ok':status==='skipped'?'info':'err');
@@ -662,7 +789,8 @@ async function startJoin() {
   var joined  = grpResults.filter(function(r){return r.status==='joined';}).length;
   var skipped = grpResults.filter(function(r){return r.status==='skipped';}).length;
   var failed  = grpResults.filter(function(r){return r.status==='failed';}).length;
-  log('Done! Joined:' + joined + '  Skipped:' + skipped + '  Failed:' + failed, 'ok');
+  var dead    = grpResults.filter(function(r){return r.status==='dead';}).length;
+  log('Done! Joined:' + joined + '  Dead:' + dead + '  Already-in:' + skipped + '  Failed:' + failed, 'ok');
   setTimeout(function(){ document.getElementById('progress-bar').style.display='none'; }, 2000);
   endJoin();
 }
