@@ -577,35 +577,51 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Decide whether a search hit is a group we should keep.
-//  - must be a group (supergroup), not a broadcast channel
-//  - visible member count  → must meet the minimum-members threshold
-//  - hidden member count   → keep ONLY if posting messages is allowed
-function evalCandidate(c, minMembers, keyword) {
+// Search results only tell us it's a group — the member count and posting
+// permissions are NOT included here, so we just keep groups as candidates
+// and verify the real numbers later with getGroupInfo() before joining.
+function evalCandidate(c, keyword) {
   if (!getattr(c, 'megagroup') && !getattr(c, 'gigagroup')) return null;
-
-  var banned  = c.defaultBannedRights;
-  var canSend = !getattr(c, 'broadcast') && !(banned && banned.sendMessages);
-  var cnt     = c.participantsCount || 0;
-  var hidden  = !cnt;                       // 0 / undefined → count is hidden
-
-  if (hidden) {
-    if (!canSend) return null;              // hidden + can't post → skip
-  } else {
-    if (cnt < minMembers) return null;      // visible + below threshold → skip
-  }
-
   var id = c.id ? c.id.toString() : '';
   if (!id) return null;
   return {
     entity:  c,
     name:    c.title || c.username || 'Group',
-    members: hidden ? 'hidden' : cnt,
+    members: '?',
     keyword: keyword,
     status:  'found',
     id:      id,
-    canSend: canSend,
   };
+}
+
+// Fetch a group's REAL info (channels.getFullChannel) — accurate member
+// count, whether the member list is visible, and whether posting is allowed.
+async function getGroupInfo(group) {
+  try {
+    var G = window.GramJS.Api;
+    var res = await withTimeout(client.invoke(new G.channels.GetFullChannel({
+      channel: group.entity,
+    })), 30000, 'fullchannel');
+    var full  = res.fullChat || {};
+    var count = full.participantsCount || 0;
+    var visible = full.canViewParticipants !== false;   // member list viewable
+
+    // posting permission lives on the Channel object in res.chats
+    var canSend = true;
+    var chats = res.chats || [];
+    var gid = group.entity.id ? group.entity.id.toString() : '';
+    for (var i = 0; i < chats.length; i++) {
+      var c = chats[i];
+      if (c && c.id && c.id.toString() === gid) {
+        var banned = c.defaultBannedRights;
+        canSend = !getattr(c, 'broadcast') && !(banned && banned.sendMessages);
+        break;
+      }
+    }
+    return { members: count, visible: visible, canSend: canSend };
+  } catch (e) {
+    return null;   // couldn't verify
+  }
 }
 
 async function searchGroups(keyword, minMembers) {
@@ -615,7 +631,7 @@ async function searchGroups(keyword, minMembers) {
 
   function collect(chats) {
     for (var i = 0; i < chats.length; i++) {
-      var g = evalCandidate(chats[i], minMembers, keyword);
+      var g = evalCandidate(chats[i], keyword);
       if (!g || seen[g.id]) continue;
       seen[g.id] = true;
       found.push(g);
@@ -852,6 +868,30 @@ async function startJoin() {
       // if the link dropped, wait and retry — don't lose the queue
       if (!(await ensureConnected())) { await sleep(5000); continue; }
       var grp = joinQueue.shift();
+
+      // ── accurate gate: only join visible-member, postable groups ──
+      var info = await getGroupInfo(grp);
+      if (!info) {
+        grp.status = 'skipped';
+        log('⏭ Skipped — couldn\'t verify: ' + grp.name, 'info');
+        updateStats(); renderResults(); continue;
+      }
+      grp.members = info.visible ? info.members : 'hidden';
+      if (!info.visible) {
+        grp.status = 'skipped';
+        log('⏭ Skipped — members hidden: ' + grp.name, 'info');
+        updateStats(); renderResults(); continue;
+      }
+      if (info.members < minM) {
+        grp.status = 'skipped';
+        log('⏭ Skipped — only ' + info.members + ' members: ' + grp.name, 'info');
+        updateStats(); renderResults(); continue;
+      }
+      if (!info.canSend) {
+        grp.status = 'skipped';
+        log('⏭ Skipped — posting disabled: ' + grp.name, 'info');
+        updateStats(); renderResults(); continue;
+      }
 
       // activity check right before joining this one
       if (activityOn) {
