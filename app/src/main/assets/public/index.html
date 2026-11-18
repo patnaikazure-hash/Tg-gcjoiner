@@ -768,56 +768,79 @@ async function startJoin() {
     endJoin(); return;
   }
 
-  // ── Phase 1: search all keywords ──
-  var allGroups = [];
-  var seen = {};
-  for (var ki = 0; ki < keywords.length && !stopFlag; ki++) {
-    var kw = keywords[ki];
-    log('Searching: "' + kw + '"…', 'info');
-    setProgress(Math.round(ki / keywords.length * 35));
-    try {
-      var found = await searchGroups(kw, minM);
-      log('  "' + kw + '" → ' + found.length + ' group(s) with ' + minM + '+ members', found.length ? 'ok' : 'info');
-      found.forEach(function(g) {
-        if (seen[g.id]) return;
-        seen[g.id] = true;
-        allGroups.push(g);
-        grpResults.push(g);
-      });
-      updateStats(); renderResults();
-    } catch(e) {
-      log('Search error for "' + kw + '": ' + (e.message||e), 'err');
+  // ── Pipelined search + join (run concurrently) ──
+  // Producer searches keyword-by-keyword and drops each newly found group
+  // into a queue. Consumer pulls from the queue and joins them one at a
+  // time (8s apart) as they arrive — so joining overlaps with the ongoing
+  // search instead of waiting for the whole search to finish first.
+  var allGroups  = [];
+  var joinQueue  = [];
+  var seen       = {};
+  var searchDone = false;
+
+  async function producer() {
+    for (var ki = 0; ki < keywords.length && !stopFlag; ki++) {
+      var kw = keywords[ki];
+      log('🔍 Searching: "' + kw + '"…', 'info');
+      try {
+        var found = await searchGroups(kw, minM);
+        var fresh = 0;
+        found.forEach(function(g) {
+          if (seen[g.id]) return;
+          seen[g.id] = true;
+          allGroups.push(g);
+          grpResults.push(g);
+          joinQueue.push(g);          // hand to consumer immediately
+          fresh++;
+        });
+        log('  "' + kw + '" → ' + fresh + ' new group(s), ' + minM + '+ members', fresh ? 'ok' : 'info');
+        updateStats(); renderResults();
+      } catch(e) {
+        log('Search error for "' + kw + '": ' + (e.message||e), 'err');
+      }
+      if (!stopFlag) await sleep(900);  // small gap between searches
     }
-    if (!stopFlag) await sleep(1200); // small pause between searches
+    searchDone = true;
   }
 
-  setProgress(35);
-  log('Total unique groups found: ' + allGroups.length, 'ok');
+  async function consumer() {
+    var processed = 0;
+    while ((!searchDone || joinQueue.length) && !stopFlag) {
+      if (!joinQueue.length) { await sleep(300); continue; }   // wait for producer
+      var grp = joinQueue.shift();
 
-  // ── Phase 1.5: activity check — drop dead groups ──
-  var toJoin = allGroups;
-  if (activityOn && allGroups.length && !stopFlag) {
-    log('Checking which groups are actually active…', 'info');
-    toJoin = await filterActive(allGroups, activityWin);
-    log('Active: ' + toJoin.length + ' / ' + allGroups.length + '  (dead groups skipped)', 'ok');
+      // activity check right before joining this one
+      if (activityOn) {
+        var res = await checkActive(grp, activityWin);
+        grp.activity = res;
+        if (res.active === false) {
+          grp.status = 'dead';
+          log('💀 Dead: ' + grp.name + ' — last chat ' + fmtAgo(res.lastMs), 'info');
+          updateStats(); renderResults();
+          continue;                    // skip join → no 8s wait
+        }
+        log((res.active === true ? '🟢 Active: ' : '❔ ') + grp.name
+            + (res.active === true ? ' — last ' + fmtAgo(res.lastMs) : ' — history unreadable, trying anyway'),
+            res.active === true ? 'ok' : 'info');
+      }
+
+      log('Joining: ' + grp.name + ' (' + grp.members + ' members)…', 'join');
+      var status = await joinGroup(grp);
+      grp.status = status;             // shared reference — updates Results too
+
+      var emoji = status==='joined'?'✅':status==='skipped'?'⏭':'❌';
+      log(emoji + ' ' + grp.name + ': ' + status, status==='joined'?'ok':status==='skipped'?'info':'err');
+      processed++;
+      setProgress(Math.min(95, Math.round(processed / Math.max(allGroups.length, 1) * 100)));
+      updateStats(); renderResults();
+
+      // 8s spacing only after an actual join attempt
+      if (!stopFlag && status !== 'skipped') await sleep(delay);
+    }
   }
-  setProgress(60);
 
-  // ── Phase 2: join each active group ──
-  for (var gi = 0; gi < toJoin.length && !stopFlag; gi++) {
-    var grp = toJoin[gi];
-    log('Joining: ' + grp.name + ' (' + grp.members + ' members)…', 'join');
-    setProgress(60 + Math.round(gi / toJoin.length * 40));
-
-    var status = await joinGroup(grp);
-    grp.status = status;   // shared reference — updates the Results list too
-
-    var emoji = status==='joined'?'✅':status==='skipped'?'⏭':'❌';
-    log(emoji + ' ' + grp.name + ': ' + status, status==='joined'?'ok':status==='skipped'?'info':'err');
-    updateStats(); renderResults();
-
-    if (!stopFlag && status !== 'skipped') await sleep(delay);
-  }
+  // run both together — join starts the moment the first group is found
+  await Promise.all([ producer(), consumer() ]);
 
   setProgress(100);
   var joined  = grpResults.filter(function(r){return r.status==='joined';}).length;
