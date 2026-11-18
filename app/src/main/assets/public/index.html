@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>TG GC Joiner</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0e0e0e;
+  --card: #1a1a1a;
+  --border: #2a2a2a;
+  --accent: #38bdf8;
+  --green: #4ade80;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --text: #e5e5e5;
+  --muted: #888;
+}
+body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+.tab { flex: 1; padding: 14px 6px; text-align: center; font-size: 12px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: .2s; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.page { display: none; padding: 16px; }
+.page.active { display: block; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+.card-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.card-value { font-size: 24px; font-weight: 700; }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+
+.btn { width: 100%; padding: 13px; border-radius: 8px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: .2s; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-stop { background: var(--red); color: #fff; }
+.btn-danger { background: var(--red); color: #fff; margin-top: 10px; }
+.btn-sm { width: auto; padding: 8px 14px; font-size: 13px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+.input { width: 100%; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 15px; outline: none; margin-bottom: 12px; }
+.input:focus { border-color: var(--accent); }
+label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+
+.log { background: #111; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 11px; font-family: monospace; max-height: 200px; overflow-y: auto; color: #aaa; }
+.log p { margin-bottom: 3px; line-height: 1.5; }
+.log p.ok   { color: var(--green); }
+.log p.err  { color: var(--red); }
+.log p.info { color: var(--yellow); }
+.log p.join { color: var(--accent); }
+
+.section-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+.empty { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; }
+
+.progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 10px 0; }
+.progress-fill { height: 100%; background: var(--accent); transition: width .4s; border-radius: 2px; }
+
+/* keyword tags */
+.kw-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; min-height: 36px; }
+.kw-tag { display: flex; align-items: center; gap: 6px; background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.3); color: var(--accent); border-radius: 20px; padding: 5px 12px; font-size: 13px; }
+.kw-tag .rm { cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; }
+.kw-tag .rm:hover { color: var(--red); }
+.kw-add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.kw-add-row .input { margin: 0; flex: 1; }
+
+/* group result card */
+.grp-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+.grp-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.grp-meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge.joined  { background: rgba(74,222,128,.15); color: var(--green); }
+.badge.skipped { background: rgba(136,136,136,.15); color: var(--muted); }
+.badge.failed  { background: rgba(248,113,113,.15); color: var(--red); }
+.badge.found   { background: rgba(56,189,248,.12);  color: var(--accent); }
+
+.session-info { font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; word-break: break-all; }
+
+.range-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.range-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.range-val { font-size: 14px; font-weight: 700; color: var(--accent); min-width: 50px; text-align: right; }
+</style>
+<script>
+window._errLog = [];
+window.addEventListener('error', function(e) {
+  var m = e.message || (e.error && e.error.message) || 'unknown';
+  window._errLog.push(m + ' (' + (e.filename||'?').split('/').pop() + ':' + (e.lineno||'?') + ')');
+}, true);
+window.addEventListener('unhandledrejection', function(e) {
+  window._errLog.push('Promise: ' + ((e.reason && e.reason.message) || String(e.reason)));
+});
+</script>
+</head>
+<body>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('joiner')">🔗 Joiner</div>
+  <div class="tab" onclick="showTab('results')">📋 Results</div>
+  <div class="tab" onclick="showTab('login')">🔑 Login</div>
+  <div class="tab" onclick="showTab('settings')">⚙️ Settings</div>
+</div>
+
+<!-- ═══ JOINER ═══════════════════════════════════════════ -->
+<div class="page active" id="page-joiner">
+
+  <div class="stats">
+    <div class="card">
+      <div class="card-title">Found</div>
+      <div class="card-value" id="stat-found">0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Joined</div>
+      <div class="card-value" style="color:var(--green)" id="stat-joined">0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Skipped</div>
+      <div class="card-value" style="color:var(--muted)" id="stat-skipped">0</div>
+    </div>
+  </div>
+
+  <!-- Keywords -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">Keywords to search</div>
+    <div class="kw-wrap" id="kw-wrap">
+      <div class="empty" id="kw-empty" style="padding:8px 0; font-size:12px; width:100%">No keywords yet</div>
+    </div>
+    <div class="kw-add-row">
+      <input class="input" id="kw-input" type="text" placeholder="e.g. crypto, python, startup…"
+             onkeydown="if(event.key==='Enter')addKeyword()">
+      <button class="btn-sm btn-primary" onclick="addKeyword()">Add</button>
+    </div>
+    <button class="btn btn-outline btn-sm" style="width:auto; margin-bottom:0" onclick="loadSampleKW()">Load samples</button>
+  </div>
+
+  <!-- Min members slider -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">Minimum members filter</div>
+    <div class="range-row" style="margin-top:8px">
+      <input type="range" id="min-members" min="100" max="10000" step="100" value="500"
+             oninput="document.getElementById('min-val').textContent=this.value+'+'">
+      <div class="range-val" id="min-val">500+</div>
+    </div>
+  </div>
+
+  <!-- Action buttons -->
+  <div id="btn-start-wrap">
+    <button class="btn btn-primary" id="start-btn" onclick="startJoin()">🚀 Start Auto Join</button>
+  </div>
+  <div id="btn-stop-wrap" style="display:none">
+    <button class="btn btn-stop" onclick="stopJoin()">⏹ Stop</button>
+  </div>
+
+  <div class="progress-bar" id="progress-bar" style="display:none">
+    <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+  </div>
+
+  <div class="log" id="join-log" style="margin-top:12px"><p>Add keywords above and tap Start.</p></div>
+</div>
+
+<!-- ═══ RESULTS ══════════════════════════════════════════ -->
+<div class="page" id="page-results">
+  <div class="section-title">Groups Found & Joined</div>
+  <div style="display:flex; gap:8px; margin-bottom:12px">
+    <button class="btn-sm btn-outline" onclick="setRFilter('all')">All</button>
+    <button class="btn-sm btn-outline" onclick="setRFilter('joined')">✅ Joined</button>
+    <button class="btn-sm btn-outline" onclick="setRFilter('skipped')">⏭ Skipped</button>
+    <button class="btn-sm btn-outline" onclick="setRFilter('failed')">❌ Failed</button>
+  </div>
+  <div id="results-list"><div class="empty">No results yet — run the joiner first.</div></div>
+</div>
+
+<!-- ═══ LOGIN ════════════════════════════════════════════ -->
+<div class="page" id="page-login">
+  <div class="section-title">Telegram Login</div>
+
+  <div id="saved-session" style="display:none">
+    <div class="session-info" id="session-display"></div>
+    <button class="btn btn-primary" onclick="showTab('joiner')">✅ Logged In — Go Join</button>
+    <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
+  </div>
+
+  <div id="login-form">
+    <label>Phone Number (with country code)</label>
+    <input class="input" id="inp-phone" type="tel" placeholder="+919861992132">
+
+    <div id="otp-section" style="display:none">
+      <label>OTP Code from Telegram</label>
+      <input class="input" id="inp-otp" type="text" inputmode="numeric" pattern="[0-9]*"
+             placeholder="12345" autocomplete="one-time-code">
+      <div id="pass-section" style="display:none">
+        <label>2FA Password</label>
+        <input class="input" id="inp-pass" type="password" placeholder="password">
+      </div>
+      <button class="btn btn-primary" id="verify-btn" onclick="verifyOTP()">Verify</button>
+    </div>
+
+    <div id="send-otp-wrap">
+      <button class="btn btn-primary" id="send-btn" onclick="sendOTP()">Send OTP</button>
+    </div>
+
+    <div class="log" id="login-log" style="margin-top:12px"><p>Enter phone and tap Send OTP</p></div>
+  </div>
+</div>
+
+<!-- ═══ SETTINGS ═════════════════════════════════════════ -->
+<div class="page" id="page-settings">
+  <div class="section-title">Settings</div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">API Credentials</div>
+    <label style="margin-top:8px">API ID</label>
+    <input class="input" id="set-api-id" type="number" placeholder="12345678">
+    <label>API Hash</label>
+    <input class="input" id="set-api-hash" type="text" placeholder="your api hash here">
+    <p style="font-size:11px; color:var(--muted); margin-bottom:12px">
+      Get these at <span style="color:var(--accent)">my.telegram.org</span> → API development tools
+    </p>
+    <button class="btn btn-primary" onclick="saveSettings()">Save Credentials</button>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">Join Delay (seconds between joins)</div>
+    <div class="range-row" style="margin-top:8px">
+      <input type="range" id="join-delay" min="3" max="30" step="1" value="8"
+             oninput="document.getElementById('delay-val').textContent=this.value+'s'">
+      <div class="range-val" id="delay-val">8s</div>
+    </div>
+    <p style="font-size:11px; color:var(--muted)">
+      Lower = faster but higher flood-ban risk. 8s is safe.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Data</div>
+    <button class="btn btn-danger" onclick="clearResults()">🗑 Clear All Results</button>
+  </div>
+</div>
+
+<!-- GramJS bundle — same one from Tg-scanr -->
+<script src="telegram.bundle.js" onerror="window._bundleLoadFailed=true"></script>
+<script>
+// ─── Bundle guard ────────────────────────────────────────
+window.addEventListener('load', function() {
+  if (window._bundleLoadFailed || typeof window.GramJS === 'undefined') {
+    var detail = window._errLog && window._errLog.length
+      ? window._errLog.join(' | ')
+      : 'GramJS bundle missing. Add telegram.bundle.js to assets/public/';
+    var msg = '❌ ' + detail;
+    document.getElementById('join-log').innerHTML = '<p class="err">' + escapeHtml(msg) + '</p>';
+    document.getElementById('login-log').innerHTML = '<p class="err">' + escapeHtml(msg) + '</p>';
+  }
+});
+
+// ─── State ───────────────────────────────────────────────
+const API_ID   = () => parseInt(localStorage.getItem('api_id'))   || 0;
+const API_HASH = () => (localStorage.getItem('api_hash') || '').trim();
+const JOIN_DELAY = () => parseInt(document.getElementById('join-delay').value) * 1000;
+const MIN_MEMBERS = () => parseInt(document.getElementById('min-members').value) || 500;
+
+let client        = null;
+let phoneCodeHash = null;
+let awaitingPass  = false;
+let running       = false;
+let stopFlag      = false;
+
+let keywords  = [];   // active keyword list
+let grpResults = [];  // {name, username, members, keyword, status}
+
+// ─── Tab nav ─────────────────────────────────────────────
+function showTab(tab) {
+  ['joiner','results','login','settings'].forEach(function(t, i) {
+    document.querySelectorAll('.tab')[i].classList.toggle('active', t === tab);
+    document.getElementById('page-' + t).classList.toggle('active', t === tab);
+  });
+  if (tab === 'login')   checkSavedSession();
+  if (tab === 'results') renderResults();
+}
+
+// ─── Utils ───────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function log(msg, type) {
+  var el = document.getElementById('join-log');
+  var p  = document.createElement('p');
+  p.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+  if (type) p.className = type;
+  el.appendChild(p);
+  el.scrollTop = el.scrollHeight;
+}
+function llog(msg, type) {
+  var el = document.getElementById('login-log');
+  var p  = document.createElement('p');
+  p.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+  if (type) p.className = type;
+  el.appendChild(p);
+  el.scrollTop = el.scrollHeight;
+}
+function setProgress(pct) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+}
+function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+
+// ─── Settings ────────────────────────────────────────────
+function saveSettings() {
+  localStorage.setItem('api_id',   document.getElementById('set-api-id').value);
+  localStorage.setItem('api_hash', document.getElementById('set-api-hash').value);
+  alert('Saved!');
+}
+function clearResults() {
+  if (!confirm('Clear all results?')) return;
+  grpResults = [];
+  renderResults();
+  updateStats();
+}
+
+// ─── Keywords ────────────────────────────────────────────
+var SAMPLES = ['crypto', 'python', 'trading', 'nft', 'startup', 'ai tools', 'gaming', 'coding'];
+
+function addKeyword() {
+  var inp = document.getElementById('kw-input');
+  var val = inp.value.trim();
+  if (!val) return;
+  val.split(/[,\n]+/).forEach(function(k) {
+    k = k.trim();
+    if (k && !keywords.includes(k)) keywords.push(k);
+  });
+  inp.value = '';
+  renderKeywords();
+}
+function removeKeyword(i) {
+  keywords.splice(i, 1);
+  renderKeywords();
+}
+function loadSampleKW() {
+  SAMPLES.forEach(function(k) { if (!keywords.includes(k)) keywords.push(k); });
+  renderKeywords();
+}
+function renderKeywords() {
+  var wrap  = document.getElementById('kw-wrap');
+  var empty = document.getElementById('kw-empty');
+  if (!keywords.length) {
+    wrap.innerHTML = '';
+    wrap.appendChild(empty);
+    return;
+  }
+  wrap.innerHTML = keywords.map(function(k, i) {
+    return '<div class="kw-tag">' + escapeHtml(k)
+      + '<span class="rm" onclick="removeKeyword(' + i + ')">×</span></div>';
+  }).join('');
+}
+
+// ─── GramJS client ───────────────────────────────────────
+function makeClient(sessionStr) {
+  var TC = window.GramJS.TelegramClient;
+  var SS = window.GramJS.StringSession;
+  return new TC(new SS(sessionStr || ''), API_ID(), API_HASH(), {
+    connectionRetries: 5,
+    useWSS: true,
+    floodSleepThreshold: 60,
+    requestRetries: 3,
+  });
+}
+
+// ─── LOGIN ───────────────────────────────────────────────
+function checkSavedSession() {
+  var sess  = localStorage.getItem('tg_session');
+  var saved = document.getElementById('saved-session');
+  var form  = document.getElementById('login-form');
+  if (sess && sess.length > 10) {
+    saved.style.display = 'block'; form.style.display = 'none';
+    document.getElementById('session-display').textContent =
+      'Session saved ✓ (' + sess.substring(0, 30) + '…)';
+  } else {
+    saved.style.display = 'none'; form.style.display = 'block';
+  }
+}
+function logout() {
+  localStorage.removeItem('tg_session');
+  if (client) { try { client.disconnect(); } catch(e){} client = null; }
+  checkSavedSession();
+}
+
+async function sendOTP() {
+  if (typeof window.GramJS === 'undefined')
+    return llog('Bundle not loaded!', 'err');
+  var phone = document.getElementById('inp-phone').value.trim();
+  if (!phone) return alert('Enter phone number');
+  var btn = document.getElementById('send-btn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  llog('Connecting…', 'info');
+  try {
+    if (client) { try { client.disconnect(); } catch(e){} }
+    client = makeClient('');
+    await client.connect();
+    llog('Connected. Sending OTP…', 'info');
+    var r = await client.sendCode({ apiId: API_ID(), apiHash: API_HASH() }, phone);
+    phoneCodeHash = r.phoneCodeHash; awaitingPass = false;
+    llog('OTP sent! Check Telegram.', 'ok');
+    document.getElementById('otp-section').style.display   = 'block';
+    document.getElementById('send-otp-wrap').style.display = 'none';
+  } catch(e) {
+    llog('Error: ' + (e.message || e), 'err');
+    btn.disabled = false; btn.textContent = 'Send OTP';
+  }
+}
+
+async function verifyOTP() {
+  var phone = document.getElementById('inp-phone').value.trim();
+  var code  = document.getElementById('inp-otp').value.trim();
+  var pass  = document.getElementById('inp-pass').value;
+  var btn   = document.getElementById('verify-btn');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  try {
+    if (awaitingPass) {
+      if (!pass) { llog('Enter 2FA password', 'err'); btn.disabled=false; btn.textContent='Verify'; return; }
+      var pwdInfo = await client.invoke(new window.GramJS.Api.account.GetPassword());
+      var checked = await window.GramJS.computeCheck(pwdInfo, pass);
+      await client.invoke(new window.GramJS.Api.auth.CheckPassword({ password: checked }));
+    } else {
+      if (!code) { btn.disabled=false; btn.textContent='Verify'; return alert('Enter OTP'); }
+      try {
+        await client.invoke(new window.GramJS.Api.auth.SignIn({
+          phoneNumber: phone, phoneCodeHash: phoneCodeHash, phoneCode: code,
+        }));
+      } catch(e) {
+        if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') {
+          awaitingPass = true;
+          llog('2FA required — enter password below', 'info');
+          document.getElementById('pass-section').style.display = 'block';
+          btn.disabled=false; btn.textContent='Verify'; return;
+        }
+        throw e;
+      }
+    }
+    var sess = client.session.save();
+    localStorage.setItem('tg_session', sess);
+    llog('Login successful!', 'ok');
+    setTimeout(function(){ showTab('joiner'); }, 600);
+  } catch(e) {
+    llog('Error: ' + (e.message || e), 'err');
+    btn.disabled=false; btn.textContent='Verify';
+  }
+}
+
+// ─── Stats update ─────────────────────────────────────────
+function updateStats() {
+  var found   = grpResults.length;
+  var joined  = grpResults.filter(function(r){ return r.status==='joined'; }).length;
+  var skipped = grpResults.filter(function(r){ return r.status!=='joined'; }).length;
+  document.getElementById('stat-found').textContent   = found;
+  document.getElementById('stat-joined').textContent  = joined;
+  document.getElementById('stat-skipped').textContent = skipped;
+}
+
+// ─── Results render ───────────────────────────────────────
+var rFilter = 'all';
+function setRFilter(f) { rFilter = f; renderResults(); }
+function renderResults() {
+  var list = document.getElementById('results-list');
+  var shown = grpResults.filter(function(r) {
+    return rFilter === 'all' || r.status === rFilter;
+  });
+  if (!shown.length) {
+    list.innerHTML = '<div class="empty">No ' + (rFilter==='all'?'':''+rFilter+' ') + 'results.</div>';
+    return;
+  }
+  list.innerHTML = shown.map(function(r) {
+    var bc = r.status==='joined'?'joined':r.status==='failed'?'failed':r.status==='found'?'found':'skipped';
+    var bt = r.status==='joined'?'✅ Joined':r.status==='failed'?'❌ Failed':r.status==='found'?'🔍 Found':'⏭ Skipped';
+    return '<div class="grp-item">'
+      + '<div class="grp-name">' + escapeHtml(r.name) + '</div>'
+      + '<div class="grp-meta">'
+      +   '<span class="badge ' + bc + '">' + bt + '</span>'
+      +   '<span>👥 ' + (r.members||'?') + '</span>'
+      +   '<span style="color:#555">kw: ' + escapeHtml(r.keyword) + '</span>'
+      + '</div></div>';
+  }).join('');
+}
+
+// ─── CORE: search + join ──────────────────────────────────
+async function searchGroups(keyword, minMembers) {
+  var G = window.GramJS.Api;
+  var found = [];
+  var seen  = {};
+
+  try {
+    // contacts.Search — fastest, returns groups matching keyword
+    var res = await client.invoke(new G.contacts.Search({
+      q: keyword,
+      limit: 100,
+    }));
+    var chats = res.chats || [];
+    for (var i = 0; i < chats.length; i++) {
+      var c = chats[i];
+      // megagroup = supergroup (the kind people usually mean by "group")
+      if (!getattr(c, 'megagroup') && !getattr(c, 'gigagroup')) continue;
+      var cnt = c.participantsCount || 0;
+      if (cnt < minMembers) continue;
+      var id = c.id ? c.id.toString() : '';
+      if (seen[id]) continue;
+      seen[id] = true;
+      found.push({
+        entity:  c,
+        name:    c.title || c.username || 'Group',
+        members: cnt,
+        keyword: keyword,
+        status:  'found',
+        id:      id,
+      });
+    }
+  } catch (e) {
+    // contacts.Search may require a channel resolution; also try global search
+  }
+
+  // Also try messages.SearchGlobal for extra coverage
+  try {
+    var G2 = window.GramJS.Api;
+    var res2 = await client.invoke(new G2.messages.SearchGlobal({
+      q: keyword,
+      filter: new G2.InputMessagesFilterEmpty(),
+      minDate: 0, maxDate: 0,
+      offsetRate: 0,
+      offsetPeer: new G2.InputPeerEmpty(),
+      offsetId: 0,
+      limit: 100,
+    }));
+    var chats2 = res2.chats || [];
+    for (var j = 0; j < chats2.length; j++) {
+      var c2 = chats2[j];
+      if (!getattr(c2, 'megagroup') && !getattr(c2, 'gigagroup')) continue;
+      var cnt2 = c2.participantsCount || 0;
+      if (cnt2 < minMembers) continue;
+      var id2 = c2.id ? c2.id.toString() : '';
+      if (seen[id2]) continue;
+      seen[id2] = true;
+      found.push({
+        entity:  c2,
+        name:    c2.title || c2.username || 'Group',
+        members: cnt2,
+        keyword: keyword,
+        status:  'found',
+        id:      id2,
+      });
+    }
+  } catch (e2) {}
+
+  return found;
+}
+
+function getattr(obj, key) {
+  try { return obj[key]; } catch(e) { return false; }
+}
+
+async function joinGroup(group) {
+  try {
+    var G = window.GramJS.Api;
+    await client.invoke(new G.channels.JoinChannel({ channel: group.entity }));
+    return 'joined';
+  } catch(e) {
+    var msg = e.errorMessage || e.message || '';
+    if (/USER_ALREADY_PARTICIPANT/i.test(msg)) return 'skipped';
+    if (/FLOOD_WAIT/i.test(msg)) {
+      var secs = parseInt(msg.replace(/\D/g,'')) || 30;
+      log('Flood wait ' + secs + 's…', 'info');
+      await sleep(secs * 1000);
+      return 'failed';
+    }
+    return 'failed';
+  }
+}
+
+// ─── START / STOP ─────────────────────────────────────────
+async function startJoin() {
+  if (running) return;
+
+  if (typeof window.GramJS === 'undefined')
+    return log('Bundle not loaded! Reinstall APK.', 'err');
+
+  var sess = localStorage.getItem('tg_session');
+  if (!sess || sess.length < 10) {
+    alert('Please login first! Go to Login tab.');
+    showTab('login'); return;
+  }
+  if (!keywords.length) {
+    alert('Add at least one keyword above.'); return;
+  }
+
+  running = true; stopFlag = false;
+  grpResults = [];
+  updateStats();
+
+  document.getElementById('btn-start-wrap').style.display = 'none';
+  document.getElementById('btn-stop-wrap').style.display  = 'block';
+  document.getElementById('progress-bar').style.display   = 'block';
+  document.getElementById('join-log').innerHTML = '';
+  setProgress(0);
+
+  var minM  = MIN_MEMBERS();
+  var delay = JOIN_DELAY();
+
+  log('Connecting…', 'info');
+  try {
+    if (client) { try { client.disconnect(); } catch(e){} client = null; }
+    client = makeClient(sess);
+    await client.connect();
+    log('Connected ✓', 'ok');
+  } catch(e) {
+    log('Connection failed: ' + (e.message||e), 'err');
+    endJoin(); return;
+  }
+
+  // ── Phase 1: search all keywords ──
+  var allGroups = [];
+  var seen = {};
+  for (var ki = 0; ki < keywords.length && !stopFlag; ki++) {
+    var kw = keywords[ki];
+    log('Searching: "' + kw + '"…', 'info');
+    setProgress(Math.round(ki / keywords.length * 40));
+    try {
+      var found = await searchGroups(kw, minM);
+      log('  "' + kw + '" → ' + found.length + ' group(s) with ' + minM + '+ members', found.length ? 'ok' : 'info');
+      found.forEach(function(g) {
+        if (!seen[g.id]) { seen[g.id] = true; allGroups.push(g); }
+      });
+      grpResults = grpResults.concat(found);
+      updateStats(); renderResults();
+    } catch(e) {
+      log('Search error for "' + kw + '": ' + (e.message||e), 'err');
+    }
+    if (!stopFlag) await sleep(1200); // small pause between searches
+  }
+
+  setProgress(45);
+  log('Total unique groups found: ' + allGroups.length, 'ok');
+
+  // ── Phase 2: join each group ──
+  for (var gi = 0; gi < allGroups.length && !stopFlag; gi++) {
+    var grp = allGroups[gi];
+    log('Joining: ' + grp.name + ' (' + grp.members + ' members)…', 'join');
+    setProgress(45 + Math.round(gi / allGroups.length * 50));
+
+    var status = await joinGroup(grp);
+    grp.status = status;
+
+    // find and update in grpResults
+    for (var ri = 0; ri < grpResults.length; ri++) {
+      if (grpResults[ri].id === grp.id) { grpResults[ri].status = status; break; }
+    }
+
+    var emoji = status==='joined'?'✅':status==='skipped'?'⏭':'❌';
+    log(emoji + ' ' + grp.name + ': ' + status, status==='joined'?'ok':status==='skipped'?'info':'err');
+    updateStats(); renderResults();
+
+    if (!stopFlag && status !== 'skipped') await sleep(delay);
+  }
+
+  setProgress(100);
+  var joined  = grpResults.filter(function(r){return r.status==='joined';}).length;
+  var skipped = grpResults.filter(function(r){return r.status==='skipped';}).length;
+  var failed  = grpResults.filter(function(r){return r.status==='failed';}).length;
+  log('Done! Joined:' + joined + '  Skipped:' + skipped + '  Failed:' + failed, 'ok');
+  setTimeout(function(){ document.getElementById('progress-bar').style.display='none'; }, 2000);
+  endJoin();
+}
+
+function stopJoin() {
+  stopFlag = true;
+  log('Stopping…', 'info');
+}
+
+function endJoin() {
+  running = false; stopFlag = false;
+  document.getElementById('btn-start-wrap').style.display = 'block';
+  document.getElementById('btn-stop-wrap').style.display  = 'none';
+}
+
+// ─── Init ─────────────────────────────────────────────────
+(function init() {
+  var id   = localStorage.getItem('api_id');
+  var hash = localStorage.getItem('api_hash');
+  if (id)   document.getElementById('set-api-id').value   = id;
+  if (hash) document.getElementById('set-api-hash').value = hash;
+
+  var sess = localStorage.getItem('tg_session');
+  if (sess && sess.length > 10) {
+    log('Session found ✓ — add keywords and tap Start.', 'ok');
+  } else {
+    log('Not logged in. Go to Login tab first.', 'info');
+  }
+})();
+</script>
+</body>
+</html>

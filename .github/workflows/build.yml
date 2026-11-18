@@ -1,0 +1,105 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v5
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Build GramJS browser bundle
+      run: |
+        cd gramjs-bundle
+        npm install
+        npm run build
+        ls -lah dist/
+        cp dist/telegram.bundle.js ../app/src/main/assets/public/telegram.bundle.js
+        echo "Bundle copied to assets"
+        ls -lah ../app/src/main/assets/public/
+        test -f ../app/src/main/assets/public/telegram.bundle.js || (echo "ERROR: bundle not in assets!" && exit 1)
+
+    - name: Accept Android SDK licenses and install components
+      run: |
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+          "platform-tools" \
+          "platforms;android-34" \
+          "build-tools;34.0.0"
+
+    - name: Install Gradle 8.6
+      run: |
+        wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
+        unzip -q /tmp/gradle.zip -d /tmp/gradle-install
+        export PATH="/tmp/gradle-install/gradle-8.6/bin:$PATH"
+        echo "/tmp/gradle-install/gradle-8.6/bin" >> $GITHUB_PATH
+        gradle --version
+
+    - name: Build Release APK
+      run: gradle assembleRelease --no-daemon
+      env:
+        ANDROID_HOME: /usr/local/lib/android/sdk
+
+    - name: Find and copy APK
+      run: |
+        mkdir -p output
+        find app/build/outputs/apk -name "*.apk" | head -1 | xargs -I{} cp {} output/TgGcJoiner.apk
+        ls -lah output/
+
+    - name: Upload APK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TgGcJoiner-APK
+        path: output/TgGcJoiner.apk
+        retention-days: 30
+
+    - name: Create Release
+      if: github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.${{ github.run_number }}
+        name: "TG GC Joiner v1.${{ github.run_number }}"
+        body: |
+          ## TG GC Joiner APK
+
+          Automatically search and join public Telegram group chats by keyword.
+
+          **Install:**
+          1. Download `TgGcJoiner.apk`
+          2. Enable "Install from unknown sources" in Android settings
+          3. Install and open the app
+
+          **Setup:**
+          1. Go to **Settings** tab → enter your API ID & API Hash (from my.telegram.org)
+          2. Go to **Login** tab → enter phone number → verify OTP
+          3. Go to **Joiner** tab → add keywords → tap 🚀 Start Auto Join
+
+          **Features:**
+          - Searches Telegram for public groups matching your keywords
+          - Filters by minimum member count (500+ default, adjustable)
+          - Joins matching groups automatically with flood-wait protection
+          - Real-time progress log and results screen
+          - Session saved on device — login once, run forever
+        files: output/TgGcJoiner.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
