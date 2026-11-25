@@ -2,10 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.bypass.growwkyc">
 
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
     <application
         android:label="Groww KYC Bypass"
         android:allowBackup="false"
-        android:hasCode="true">
+        android:hasCode="true"
+        android:icon="@android:drawable/ic_menu_view"
+        android:theme="@android:style/Theme.Material.NoActionBar">
 
         <!-- Tells LSPosed/Xposed this is a module -->
         <meta-data
@@ -24,6 +28,17 @@
         <meta-data
             android:name="xposedscope"
             android:value="in.groww.stocks" />
+
+        <!-- Log viewer Activity — tap the app icon to open it -->
+        <activity
+            android:name=".LogViewerActivity"
+            android:label="KYC Bypass Logs"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
     </application>
 

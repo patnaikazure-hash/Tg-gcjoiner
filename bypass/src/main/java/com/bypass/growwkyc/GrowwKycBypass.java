@@ -15,11 +15,16 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
     private static final String TAG = "GrowwKycBypass";
     private static final String TARGET_PKG = "in.groww.stocks";
 
+    private static void log(String msg) {
+        XposedBridge.log(TAG + ": " + msg);
+        LogStore.write(msg);
+    }
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         if (!lpparam.packageName.equals(TARGET_PKG)) return;
 
-        XposedBridge.log(TAG + ": Groww loaded, applying KYC bypass...");
+        log("Groww loaded, applying KYC bypass...");
 
         // ── Hook 1: KycData.isKycVerified() ──────────────────────────────────
         // This is the core data class that holds KYC state.
@@ -35,7 +40,7 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
         // ── Hook 4: Broad method hook - any method named isKycVerified ────────
         hookAllKycVerifiedMethods(lpparam.classLoader);
 
-        XposedBridge.log(TAG + ": All hooks applied.");
+        log("All hooks applied.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -56,7 +61,7 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
                 try {
                     XposedHelpers.findAndHookMethod(kycDataClass, "isKycVerified",
                         XC_MethodReplacement.returnConstant(true));
-                    XposedBridge.log(TAG + ": Hooked " + className + ".isKycVerified()");
+                    log("Hooked " + className + ".isKycVerified()");
                 } catch (Throwable t) { /* no getter, field direct */ }
 
                 // Also force the field on every object construction
@@ -96,7 +101,7 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
                 try {
                     XposedHelpers.findAndHookMethod(vm, method,
                         XC_MethodReplacement.returnConstant(null));
-                    XposedBridge.log(TAG + ": Hooked AppLaunchViewModel." + method);
+                    log("Hooked AppLaunchViewModel." + method);
                 } catch (Throwable t) { /* method may not exist */ }
             }
 
@@ -104,11 +109,11 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
             try {
                 XposedHelpers.findAndHookMethod(vm, "checkRootedDevice",
                     XC_MethodReplacement.returnConstant(null));
-                XposedBridge.log(TAG + ": Hooked checkRootedDevice (rooted bypass)");
+                log("Hooked checkRootedDevice (rooted bypass)");
             } catch (Throwable t) {}
 
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": AppLaunchViewModel not found: " + t.getMessage());
+            log("AppLaunchViewModel not found: " + t.getMessage());
         }
     }
 
@@ -130,7 +135,7 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
                         forceKycVerifiedInObject(param.thisObject);
                     }
                 });
-                XposedBridge.log(TAG + ": Hooked KycStatusResponse constructor: " + className);
+                log("Hooked KycStatusResponse constructor: " + className);
             } catch (Throwable t) {}
         }
     }
@@ -169,7 +174,7 @@ public class GrowwKycBypass implements IXposedHookLoadPackage {
                     try {
                         XposedHelpers.findAndHookMethod(cls, name,
                             XC_MethodReplacement.returnConstant(true));
-                        XposedBridge.log(TAG + ": Broad hook: " + cls.getName() + "." + name);
+                        log("Broad hook: " + cls.getName() + "." + name);
                     } catch (Throwable ignored) {}
                 } else if (ret == void.class) {
                     // Methods that navigate to KYC screen - suppress them
