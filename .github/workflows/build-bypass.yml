@@ -22,9 +22,13 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Fix gradlew JVM opts
+        run: sed -i 's/DEFAULT_JVM_OPTS=.*/DEFAULT_JVM_OPTS=""/' gradlew
+
       - name: Build bypass APK
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8"
+          JAVA_OPTS: "-Xmx2048m -Xms256m"
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dfile.encoding=UTF-8"
         run: ./gradlew :bypass:assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
