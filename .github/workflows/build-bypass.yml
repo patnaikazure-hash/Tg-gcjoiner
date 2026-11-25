@@ -33,9 +33,12 @@ jobs:
         run: |
           gradle :bypass:assembleRelease --no-daemon --stacktrace
 
+      - name: Find and upload APK
+        run: find bypass/build/outputs/apk/ -name "*.apk" | tee /tmp/apk_paths.txt
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: GrowwKycBypass
-          path: bypass/build/outputs/apk/release/bypass-release-unsigned.apk
+          path: bypass/build/outputs/apk/release/
           retention-days: 7
