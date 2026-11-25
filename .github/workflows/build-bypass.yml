@@ -19,29 +19,19 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Prepare gradlew and wrapper jar
+      - name: Install Gradle 8.6
         run: |
-          chmod +x gradlew
-          # Fix broken quoted JVM opts that cause ClassNotFoundException
-          sed -i "s/DEFAULT_JVM_OPTS=.*/DEFAULT_JVM_OPTS=''/" gradlew
-          # Download the Gradle wrapper bootstrap jar from the official distribution
-          mkdir -p gradle/wrapper
           curl -fL "https://services.gradle.org/distributions/gradle-8.6-bin.zip" -o /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp/gdist
-          # The wrapper jar lives at gradle-8.6/lib/gradle-wrapper-8.6.jar inside the zip
-          find /tmp/gdist -name "gradle-wrapper*.jar" -not -name "*sources*" | head -1 \
-            | xargs -I{} cp {} gradle/wrapper/gradle-wrapper.jar
-          echo "Wrapper jar:"
-          ls -lh gradle/wrapper/
-          echo "Gradlew DEFAULT_JVM_OPTS line:"
-          grep DEFAULT_JVM_OPTS gradlew
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.6/bin" >> $GITHUB_PATH
 
       - name: Build bypass APK
         env:
           JAVA_OPTS: "-Xmx2048m -Xms256m"
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dfile.encoding=UTF-8"
           ANDROID_HOME: /usr/local/lib/android/sdk
-        run: ./gradlew :bypass:assembleRelease --no-daemon --stacktrace
+        run: |
+          gradle :bypass:assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
